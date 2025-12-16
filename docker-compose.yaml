@@ -1,0 +1,80 @@
+services:
+  # PostgreSQL with pgvector extension
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: langchain_postgres
+    environment:
+      POSTGRES_DB: langchain_db
+      POSTGRES_USER: langchain_user
+      POSTGRES_PASSWORD: langchain_password
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U langchain_user -d langchain_db" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - langchain_network
+
+  # LangChain Hello World 애플리케이션
+  langchain_app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: langchain_app
+    environment:
+      # 데이터베이스 연결 설정
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: langchain_db
+      POSTGRES_USER: langchain_user
+      POSTGRES_PASSWORD: langchain_password
+
+      # OpenAI API 키 (선택사항 - .env 파일에서 로드)
+      # OPENAI_API_KEY: ${OPENAI_API_KEY}
+
+      # Python 설정
+      PYTHONUNBUFFERED: 1
+      DOCKER_ENV: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./app.py:/app/app.py:ro # 개발 중 코드 변경 반영
+    networks:
+      - langchain_network
+    # 컨테이너가 종료되지 않도록 유지 (개발용)
+    tty: true
+    stdin_open: true
+    # 애플리케이션 실행 후 컨테이너를 유지하기 위해 tail 명령 사용
+    command: [ "sh", "-c", "python app.py && tail -f /dev/null" ]
+
+  # pgAdmin (선택사항 - 데이터베이스 관리용)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: langchain_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "8080:80"
+    depends_on:
+      - postgres
+    networks:
+      - langchain_network
+    profiles:
+      - admin # 'docker-compose --profile admin up' 으로 실행
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  langchain_network:
+    driver: bridge
