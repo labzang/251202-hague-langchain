@@ -21,7 +21,7 @@ services:
     networks:
       - langchain_network
 
-  # LangChain Hello World 애플리케이션
+  # LangChain FastAPI 애플리케이션
   langchain_app:
     build:
       context: .
@@ -34,25 +34,47 @@ services:
       POSTGRES_DB: langchain_db
       POSTGRES_USER: langchain_user
       POSTGRES_PASSWORD: langchain_password
+      PGVECTOR_USER: langchain_user
+      PGVECTOR_PASSWORD: langchain_password
+      PGVECTOR_HOST: postgres
+      PGVECTOR_PORT: 5432
+      PGVECTOR_DATABASE: langchain_db
 
       # OpenAI API 키 (선택사항 - .env 파일에서 로드)
-      # OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
 
       # Python 설정
       PYTHONUNBUFFERED: 1
-      DOCKER_ENV: "true"
+      DEBUG: "false"
+    ports:
+      - "8000:8000"  # FastAPI 포트 노출
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
-      - ./app.py:/app/app.py:ro # 개발 중 코드 변경 반영
+      - ./app:/app/app:ro  # 개발 중 코드 변경 반영
+      - ./.env:/app/.env:ro  # 환경 변수 파일
     networks:
       - langchain_network
-    # 컨테이너가 종료되지 않도록 유지 (개발용)
-    tty: true
-    stdin_open: true
-    # 애플리케이션 실행 후 컨테이너를 유지하기 위해 tail 명령 사용
-    command: [ "sh", "-c", "python app.py && tail -f /dev/null" ]
+
+  # Next.js 프론트엔드
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: rag_chatbot_frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - langchain_app
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    networks:
+      - langchain_network
 
   # pgAdmin (선택사항 - 데이터베이스 관리용)
   pgadmin:
