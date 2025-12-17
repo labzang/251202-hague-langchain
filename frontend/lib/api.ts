@@ -1,5 +1,6 @@
 import axios from 'axios'
 
+// FastAPI 백엔드(app/api_server.py)와 통신하는 기본 URL
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 const api = axios.create({

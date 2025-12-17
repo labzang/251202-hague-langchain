@@ -36,3 +36,11 @@ frontend/.env*.local
 # OS
 .DS_Store
 Thumbs.db
+
+# Local model weights (large files, not for Git)
+app/model/midm/
+app/model/
+*.safetensors
+*.bin
+*.pt
+*.onnx

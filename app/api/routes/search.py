@@ -2,16 +2,15 @@
 
 from typing import List
 from fastapi import APIRouter, HTTPException, Depends
-from langchain_community.vectorstores import PGVector
 from langchain_core.documents import Document
 
 from app.api.models import SearchRequest, SearchResponse, DocumentResponse
-from app.core.vectorstore import get_vectorstore
+from app.core.vectorstore import get_vectorstore, VectorStoreType
 
 router = APIRouter(prefix="/search", tags=["search"])
 
 
-def get_vectorstore_dependency() -> PGVector:
+def get_vectorstore_dependency() -> VectorStoreType:
     """벡터스토어 의존성 주입."""
     return get_vectorstore()
 
@@ -19,7 +18,7 @@ def get_vectorstore_dependency() -> PGVector:
 @router.post("", response_model=SearchResponse)
 async def vector_search(
     request: SearchRequest,
-    vectorstore: PGVector = Depends(get_vectorstore_dependency),
+    vectorstore: VectorStoreType = Depends(get_vectorstore_dependency),
 ) -> SearchResponse:
     """
     벡터 유사도 검색을 수행합니다.

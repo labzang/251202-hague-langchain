@@ -1,4 +1,8 @@
-"""FastAPI server for RAG with OpenAI and pgvector. --> api server"""
+"""FastAPI 기반 RAG 백엔드 서버.
+
+이 모듈은 순수하게 API 서버 역할만 수행하며,
+Next.js 프론트엔드(`frontend/`)와는 HTTP 요청/응답으로만 통신합니다.
+"""
 
 import os
 from typing import List, Optional
@@ -12,7 +16,12 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_postgres import PGVector
+from langchain_core.language_models.base import BaseLanguageModel
 from pydantic import BaseModel
+
+# 한국어 모델 지원
+from app.core.korean_llm import init_korean_llm
+from app.core.korean_embeddings import init_korean_embeddings
 
 # Load environment variables from root directory
 env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
@@ -67,9 +76,8 @@ def init_vector_store() -> PGVector:
         f"@{postgres_host}:{postgres_port}/{postgres_db}"
     )
 
-    # Use OpenAI embeddings
-    print("Using OpenAI embeddings (text-embedding-3-small)")
-    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+    # Use Korean embeddings or OpenAI embeddings
+    embeddings = init_korean_embeddings()
 
     collection_name = os.getenv("COLLECTION_NAME", "rag_collection")
 
@@ -82,15 +90,26 @@ def init_vector_store() -> PGVector:
     return store
 
 
-def init_llm() -> ChatOpenAI:
-    """Initialize LLM with OpenAI."""
-    print("Using OpenAI LLM (gpt-3.5-turbo)")
-    llm = ChatOpenAI(
-        model="gpt-3.5-turbo",
-        temperature=0.7,
-    )
-    print("✓ OpenAI LLM initialized!")
-    return llm
+def init_llm() -> BaseLanguageModel:
+    """
+    Initialize LLM with Korean model or OpenAI.
+    환경 변수에 따라 한국어 모델 또는 OpenAI 사용.
+    """
+    # OpenAI 사용 여부 확인
+    use_openai = os.getenv("USE_OPENAI", "false").lower() == "true"
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+
+    if use_openai and openai_api_key:
+        print("Using OpenAI LLM (gpt-3.5-turbo)")
+        llm = ChatOpenAI(
+            model="gpt-3.5-turbo",
+            temperature=0.7,
+        )
+        print("✓ OpenAI LLM initialized!")
+        return llm
+    else:
+        # 한국어 모델 사용
+        return init_korean_llm()
 
 
 @app.on_event("startup")

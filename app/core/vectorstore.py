@@ -1,6 +1,14 @@
-"""벡터스토어 설정 및 관리."""
+"""벡터스토어 설정 및 관리 (Neon Postgres + pgvector).
+
+로컬 Docker 컨테이너의 Postgres/pgvector 대신,
+외부에서 제공되는 Postgres (예: Neon) 인스턴스를 사용합니다.
+
+연결 정보는 `app.config.Settings.database_url` 을 통해 주입되며,
+이는 `.env` 의 `DATABASE_URL` 값(없으면 기존 POSTGRES_* 조합)을 사용합니다.
+"""
 
 from typing import List
+
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_openai import OpenAIEmbeddings
@@ -28,18 +36,25 @@ def get_embeddings() -> Embeddings:
     return SimpleEmbeddings()
 
 
-def get_vectorstore() -> PGVector:
-    """pgvector 벡터스토어 인스턴스 반환."""
+def get_connection_string() -> str:
+    """PGVector에 사용할 데이터베이스 연결 문자열 반환."""
+    return settings.database_url
+
+
+def get_vectorstore() -> "PGVector":
+    """PGVector 벡터스토어 인스턴스 반환 (Neon 등 외부 Postgres 사용)."""
     embeddings = get_embeddings()
+    connection_string = get_connection_string()
+
     vectorstore = PGVector(
-        connection_string=settings.database_url,
+        connection_string=connection_string,
         embedding_function=embeddings,
         collection_name="langchain_collection",
     )
     return vectorstore
 
 
-def add_sample_documents(vectorstore: PGVector) -> None:
+def add_sample_documents(vectorstore: "PGVector") -> None:
     """샘플 문서들을 벡터스토어에 추가."""
     sample_docs = [
         Document(
@@ -66,18 +81,24 @@ def add_sample_documents(vectorstore: PGVector) -> None:
     vectorstore.add_documents(sample_docs)
 
 
-def initialize_vectorstore() -> PGVector:
-    """벡터스토어 초기화 및 샘플 데이터 추가."""
+def initialize_vectorstore() -> "PGVector":
+    """벡터스토어 초기화 및 샘플 데이터 추가.
+
+    원격 Postgres를 사용하므로, 단 한 번 초기화되면 이후에는
+    같은 컬렉션을 계속 재사용합니다.
+    """
     vectorstore = get_vectorstore()
 
-    # 기존 문서 확인
     try:
         existing_docs = vectorstore.similarity_search("test", k=1)
         if not existing_docs:
             add_sample_documents(vectorstore)
     except Exception:
-        # 테이블이 없거나 오류 발생 시 샘플 문서 추가
+        # 테이블/컬렉션이 없거나 기타 오류가 있을 경우 샘플 문서를 추가
         add_sample_documents(vectorstore)
 
     return vectorstore
 
+
+# 라우터에서 사용할 타입 별칭
+VectorStoreType = PGVector
