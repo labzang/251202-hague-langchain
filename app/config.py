@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     llm_provider: str = os.getenv("LLM_PROVIDER", "openai")  # openai, korean_local, midm 등
     local_model_dir: Optional[str] = os.getenv("LOCAL_MODEL_DIR")  # 로컬 모델 디렉터리 경로
 
+    # Chat Service 설정 (QLoRA)
+    chat_model_path: Optional[str] = os.getenv("CHAT_MODEL_PATH")  # QLoRA 모델 경로 또는 Hugging Face 모델 ID
+    chat_adapter_path: Optional[str] = os.getenv("CHAT_ADAPTER_PATH")  # LoRA 어댑터 경로 (선택사항)
+    use_chat_service: bool = os.getenv("USE_CHAT_SERVICE", "false").lower() == "true"  # Chat Service 사용 여부
+
     # 애플리케이션 설정
     app_name: str = "LangChain RAG API"
     app_version: str = "1.0.0"

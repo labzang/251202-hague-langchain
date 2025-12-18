@@ -44,3 +44,4 @@ app/model/
 *.bin
 *.pt
 *.onnx
+*.pem

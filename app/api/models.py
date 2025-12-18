@@ -1,7 +1,7 @@
 """API 요청/응답 모델."""
 
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class SearchRequest(BaseModel):
@@ -42,6 +42,22 @@ class RAGResponse(BaseModel):
     sources: Optional[List[DocumentResponse]] = Field(
         None, description="참조된 문서 목록"
     )
+    # 프론트엔드 호환성을 위한 필드
+    retrieved_documents: Optional[List[DocumentResponse]] = Field(
+        None, description="검색된 문서 목록 (프론트엔드 호환)"
+    )
+    retrieved_count: Optional[int] = Field(
+        None, description="검색된 문서 개수 (프론트엔드 호환)"
+    )
+
+    @model_validator(mode='after')
+    def set_retrieved_fields(self) -> 'RAGResponse':
+        """sources가 있으면 retrieved_documents와 retrieved_count를 자동 설정."""
+        if self.sources and not self.retrieved_documents:
+            self.retrieved_documents = self.sources
+        if self.retrieved_documents is not None and self.retrieved_count is None:
+            self.retrieved_count = len(self.retrieved_documents)
+        return self
 
 
 class HealthResponse(BaseModel):

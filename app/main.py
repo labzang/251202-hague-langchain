@@ -9,7 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.api.models import HealthResponse
-from app.api.routes import search, rag
+from app.api.routes import search
+from app.router import chat_router
 
 
 def wait_for_postgres() -> None:
@@ -62,6 +63,27 @@ async def lifespan(app: FastAPI):
     else:
         print("⚠️ LLM 설정이 불완전합니다. 기본 동작으로 실행합니다.")
         app.state.llm = None
+
+    # 🔧 Chat Service (QLoRA) 초기화
+    if settings.use_chat_service and settings.chat_model_path:
+        try:
+            from app.service.chat_service import create_qlora_chat_service
+
+            print("🔧 QLoRA Chat Service 초기화 중...")
+            chat_service = create_qlora_chat_service(
+                model_name_or_path=settings.chat_model_path,
+                adapter_path=settings.chat_adapter_path,
+            )
+            app.state.chat_service = chat_service
+            print("✅ QLoRA Chat Service 초기화 완료!")
+        except Exception as e:
+            print(f"⚠️ Chat Service 초기화 실패: {e}")
+            app.state.chat_service = None
+    else:
+        app.state.chat_service = None
+        if settings.use_chat_service:
+            print("⚠️ Chat Service를 사용하려면 CHAT_MODEL_PATH를 설정하세요.")
+
     print("✅ 애플리케이션 준비 완료!")
     yield
     # 종료 시
@@ -85,9 +107,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 전역 예외 핸들러 추가
+import traceback
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """전역 예외 핸들러 - 모든 예외를 캐치하여 로깅."""
+    error_msg = str(exc)
+    print(f"❌ 전역 예외 발생: {error_msg}")
+    print(f"❌ 요청 경로: {request.url.path}")
+    print(f"❌ 요청 메서드: {request.method}")
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": f"서버 내부 오류: {error_msg}",
+            "path": request.url.path,
+        }
+    )
+
 # API 라우터 등록
 app.include_router(search.router)
-app.include_router(rag.router)
+app.include_router(chat_router.router)
 
 
 @app.get("/", tags=["root"])
