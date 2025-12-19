@@ -128,19 +128,20 @@ jobs:
               exit 1
             fi
 
-            # venv 모듈 확인 및 설치
-            if ! $PYTHON_CMD -m venv --help &> /dev/null; then
-              echo "⚠️ venv 모듈이 없습니다. 설치 중..."
-              sudo apt-get update -qq
-              sudo apt-get install -y python3-venv || {
-                echo "❌ python3-venv 설치 실패"
-                exit 1
-              }
-            fi
-
             # 가상 환경 설정
             if [ ! -d "venv" ]; then
               echo "🐍 가상 환경 생성 중..."
+              # venv 모듈 확인 (없으면 설치)
+              if ! $PYTHON_CMD -m venv --help &> /dev/null; then
+                echo "⚠️ venv 모듈이 없습니다. 설치 중..."
+                sudo apt-get update -qq
+                sudo apt-get install -y python3-venv || {
+                  echo "❌ python3-venv 설치 실패"
+                  exit 1
+                }
+              fi
+
+              # 가상 환경 생성
               $PYTHON_CMD -m venv venv || {
                 echo "❌ 가상 환경 생성 실패"
                 echo "Python 버전: $($PYTHON_CMD --version)"
