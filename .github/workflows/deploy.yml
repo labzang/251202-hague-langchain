@@ -115,15 +115,78 @@ jobs:
             APP_DIR="/home/ubuntu/rag-app"
             cd "$APP_DIR"
 
+            # Python 버전 확인
+            echo "🔍 Python 버전 확인..."
+            if command -v python3.11 &> /dev/null; then
+              PYTHON_CMD=python3.11
+              echo "✅ Python 3.11 발견"
+            elif command -v python3 &> /dev/null; then
+              PYTHON_CMD=python3
+              echo "✅ Python3 발견: $(python3 --version)"
+            else
+              echo "❌ Python을 찾을 수 없습니다."
+              exit 1
+            fi
+
+            # venv 모듈 확인 및 설치
+            if ! $PYTHON_CMD -m venv --help &> /dev/null; then
+              echo "⚠️ venv 모듈이 없습니다. 설치 중..."
+              sudo apt-get update -qq
+              sudo apt-get install -y python3-venv || {
+                echo "❌ python3-venv 설치 실패"
+                exit 1
+              }
+            fi
+
             # 가상 환경 설정
             if [ ! -d "venv" ]; then
-              echo "🐍 가상 환경 생성..."
-              python3.11 -m venv venv || python3 -m venv venv
+              echo "🐍 가상 환경 생성 중..."
+              $PYTHON_CMD -m venv venv || {
+                echo "❌ 가상 환경 생성 실패"
+                echo "Python 버전: $($PYTHON_CMD --version)"
+                exit 1
+              }
+
+              # 가상 환경 생성 확인
+              if [ ! -f "venv/bin/activate" ]; then
+                echo "❌ 가상 환경 생성 실패 (activate 파일 없음)"
+                echo "venv 디렉터리 내용:"
+                ls -la venv/ || true
+                exit 1
+              fi
+              echo "✅ 가상 환경 생성 완료"
+            else
+              echo "✅ 기존 가상 환경 사용"
+              # 기존 venv가 손상되었을 수 있으므로 확인
+              if [ ! -f "venv/bin/activate" ]; then
+                echo "⚠️ 기존 venv가 손상되었습니다. 재생성합니다..."
+                rm -rf venv
+                $PYTHON_CMD -m venv venv || {
+                  echo "❌ 가상 환경 재생성 실패"
+                  exit 1
+                }
+              fi
             fi
 
             echo "📦 의존성 설치..."
-            source venv/bin/activate
+            # 가상 환경 활성화
+            source venv/bin/activate || {
+              echo "❌ 가상 환경 활성화 실패"
+              echo "venv 디렉터리 내용:"
+              ls -la venv/bin/ || true
+              exit 1
+            }
+
+            # pip 업그레이드
             pip install --upgrade pip
+
+            # requirements.txt 확인
+            if [ ! -f "requirements.txt" ]; then
+              echo "❌ requirements.txt 파일을 찾을 수 없습니다."
+              exit 1
+            fi
+
+            # 의존성 설치
             pip install -r requirements.txt
 
             # 환경 변수 파일 확인
@@ -151,7 +214,16 @@ jobs:
               pkill -f "uvicorn app.main:app" || true
               sleep 2
 
-              # 새로 시작
+              # 가상 환경이 활성화된 상태에서 실행
+              # venv/bin/uvicorn 경로 확인
+              if [ ! -f "venv/bin/uvicorn" ]; then
+                echo "❌ venv/bin/uvicorn을 찾을 수 없습니다."
+                echo "venv/bin 내용:"
+                ls -la venv/bin/ || true
+                exit 1
+              fi
+
+              # 새로 시작 (가상 환경 활성화 상태 유지)
               nohup venv/bin/uvicorn app.main:app \
                   --host 0.0.0.0 \
                   --port 8000 \
