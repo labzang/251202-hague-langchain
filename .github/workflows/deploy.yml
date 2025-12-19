@@ -1,10 +1,12 @@
-name: Deploy to EC2
+name: Deploy app to EC2
 
 on:
   push:
     branches:
       - main
       - master
+    paths:
+      - "app/**" # app 폴더 변경시에만 실행
   workflow_dispatch:
 
 env:
@@ -12,8 +14,12 @@ env:
 
 jobs:
   deploy:
-    name: Deploy to EC2
+    name: Deploy app to EC2
     runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: app # 모든 run 명령은 app/ 기준으로 실행
 
     steps:
       - name: Checkout code
@@ -27,7 +33,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt   # app/requirements.txt 기준
 
       - name: Run tests (optional)
         run: |
@@ -69,11 +75,10 @@ jobs:
 
           echo "✅ SSH 설정 완료"
 
-      - name: Deploy to EC2
+      - name: Deploy app to EC2
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
-          GITHUB_REPO: ${{ github.repository }}
         run: |
           set -e
 
@@ -83,48 +88,95 @@ jobs:
             exit 1
           fi
 
-          # 배포 스크립트 존재 확인
-          if [ ! -f "scripts/deploy.sh" ]; then
-            echo "❌ scripts/deploy.sh 파일을 찾을 수 없습니다."
-            exit 1
-          fi
+          echo "📤 app 폴더를 EC2에 배포 중..."
 
-          echo "📤 배포 스크립트 업로드 중..."
-          scp -i ~/.ssh/deploy_key \
-              -o StrictHostKeyChecking=no \
-              -o UserKnownHostsFile=~/.ssh/known_hosts \
-              scripts/deploy.sh $EC2_USER@$EC2_HOST:~/deploy.sh || {
-            echo "❌ 배포 스크립트 업로드 실패"
+          # app 폴더 전체를 EC2에 동기화 (rsync 사용)
+          # 현재 작업 디렉터리가 app/ 이므로 . 을 사용
+          rsync -avz --delete \
+            --exclude='.git' \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            --exclude='.env' \
+            --exclude='venv' \
+            --exclude='*.log' \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=~/.ssh/known_hosts" \
+            . $EC2_USER@$EC2_HOST:/home/ubuntu/rag-app/ || {
+            echo "❌ 배포 실패"
             exit 1
           }
 
-          echo "🚀 EC2에 배포 시작..."
+          echo "🚀 EC2에서 애플리케이션 설정 및 시작..."
           ssh -i ~/.ssh/deploy_key \
               -o StrictHostKeyChecking=no \
               -o UserKnownHostsFile=~/.ssh/known_hosts \
               $EC2_USER@$EC2_HOST << 'ENDSSH'
             set -e
 
-            # 배포 스크립트에 실행 권한 부여
-            chmod +x ~/deploy.sh
+            APP_DIR="/home/ubuntu/rag-app"
+            cd "$APP_DIR"
 
-            # 애플리케이션 디렉터리 확인 및 생성
-            APP_DIR="$HOME/rag-app"
-            if [ ! -d "$APP_DIR" ]; then
-              echo "📁 디렉터리가 없습니다. 클론합니다..."
-              git clone https://github.com/${{ github.repository }}.git "$APP_DIR"
-              cd "$APP_DIR"
-            else
-              cd "$APP_DIR"
-              echo "🔄 최신 코드 가져오기..."
-              git fetch origin
-              git reset --hard origin/main || git reset --hard origin/master
+            # 가상 환경 설정
+            if [ ! -d "venv" ]; then
+              echo "🐍 가상 환경 생성..."
+              python3.11 -m venv venv || python3 -m venv venv
             fi
 
-            # 배포 스크립트 실행
-            ~/deploy.sh
+            echo "📦 의존성 설치..."
+            source venv/bin/activate
+            pip install --upgrade pip
+            pip install -r requirements.txt
 
-            echo "✅ 배포 완료!"
+            # 환경 변수 파일 확인
+            if [ ! -f ".env" ]; then
+              echo "⚠️ .env 파일이 없습니다."
+              if [ -f "env.example" ]; then
+                cp env.example .env
+                echo "📝 env.example을 .env로 복사했습니다. 환경 변수를 설정하세요."
+              fi
+            fi
+
+            # systemd 서비스 재시작 또는 시작
+            if systemctl list-unit-files | grep -q "rag-app.service"; then
+              if systemctl is-active --quiet rag-app; then
+                echo "🔄 systemd 서비스 재시작..."
+                sudo systemctl restart rag-app
+              else
+                echo "▶️ systemd 서비스 시작..."
+                sudo systemctl start rag-app
+              fi
+              sudo systemctl status rag-app --no-pager || true
+            else
+              echo "⚠️ systemd 서비스가 없습니다. 직접 실행합니다..."
+              # 기존 프로세스 종료
+              pkill -f "uvicorn app.main:app" || true
+              sleep 2
+
+              # 새로 시작
+              nohup venv/bin/uvicorn app.main:app \
+                  --host 0.0.0.0 \
+                  --port 8000 \
+                  --workers 2 \
+                  > app.log 2>&1 &
+
+              echo $! > app.pid
+              echo "✅ 애플리케이션이 백그라운드에서 시작되었습니다. PID: $(cat app.pid)"
+            fi
+
+            # 헬스체크
+            echo "🏥 헬스체크..."
+            sleep 5
+
+            for i in {1..10}; do
+              if curl -f http://localhost:8000/health > /dev/null 2>&1; then
+                echo "✅ 헬스체크 성공!"
+                exit 0
+              fi
+              echo "⏳ 헬스체크 대기 중... ($i/10)"
+              sleep 2
+            done
+
+            echo "❌ 헬스체크 실패!"
+            exit 1
           ENDSSH
 
       - name: Verify deployment
