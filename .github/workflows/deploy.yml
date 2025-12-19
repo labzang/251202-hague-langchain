@@ -37,10 +37,37 @@ jobs:
 
       - name: Configure SSH
         run: |
+          set -e
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          # SSH 키 검증
+          if [ -z "${{ secrets.EC2_SSH_KEY }}" ]; then
+            echo "❌ EC2_SSH_KEY secret이 설정되지 않았습니다."
+            exit 1
+          fi
+
+          # SSH 키 파일 생성
           echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+          # SSH 키 형식 검증
+          if ! grep -q "BEGIN" ~/.ssh/deploy_key; then
+            echo "❌ SSH 키 형식이 올바르지 않습니다."
+            exit 1
+          fi
+
+          # 호스트 검증
+          if [ -z "${{ secrets.EC2_HOST }}" ]; then
+            echo "❌ EC2_HOST secret이 설정되지 않았습니다."
+            exit 1
+          fi
+
+          # known_hosts에 호스트 추가
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+          chmod 644 ~/.ssh/known_hosts
+
+          echo "✅ SSH 설정 완료"
 
       - name: Deploy to EC2
         env:
@@ -48,10 +75,34 @@ jobs:
           EC2_USER: ${{ secrets.EC2_USER }}
           GITHUB_REPO: ${{ github.repository }}
         run: |
-          # 배포 스크립트를 EC2에 업로드하고 실행
-          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no scripts/deploy.sh ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/deploy.sh
+          set -e
 
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'ENDSSH'
+          # 환경 변수 검증
+          if [ -z "$EC2_HOST" ] || [ -z "$EC2_USER" ]; then
+            echo "❌ EC2_HOST 또는 EC2_USER secret이 설정되지 않았습니다."
+            exit 1
+          fi
+
+          # 배포 스크립트 존재 확인
+          if [ ! -f "scripts/deploy.sh" ]; then
+            echo "❌ scripts/deploy.sh 파일을 찾을 수 없습니다."
+            exit 1
+          fi
+
+          echo "📤 배포 스크립트 업로드 중..."
+          scp -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=~/.ssh/known_hosts \
+              scripts/deploy.sh $EC2_USER@$EC2_HOST:~/deploy.sh || {
+            echo "❌ 배포 스크립트 업로드 실패"
+            exit 1
+          }
+
+          echo "🚀 EC2에 배포 시작..."
+          ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=~/.ssh/known_hosts \
+              $EC2_USER@$EC2_HOST << 'ENDSSH'
             set -e
 
             # 배포 스크립트에 실행 권한 부여
@@ -78,5 +129,18 @@ jobs:
 
       - name: Verify deployment
         run: |
+          set -e
           sleep 10
-          curl -f https://${{ secrets.EC2_HOST }}/health || echo "⚠️ 외부 헬스체크 실패 (방화벽 설정 확인 필요)"
+
+          EC2_HOST="${{ secrets.EC2_HOST }}"
+
+          # HTTP로 헬스체크 시도 (HTTPS는 나중에 설정 가능)
+          if curl -f --max-time 10 http://$EC2_HOST:8000/health 2>/dev/null; then
+            echo "✅ 헬스체크 성공 (포트 8000)"
+          elif curl -f --max-time 10 http://$EC2_HOST/health 2>/dev/null; then
+            echo "✅ 헬스체크 성공 (포트 80)"
+          else
+            echo "⚠️ 외부 헬스체크 실패 (방화벽 설정 확인 필요)"
+            echo "   EC2 보안 그룹에서 포트 8000 또는 80이 열려있는지 확인하세요."
+            # 헬스체크 실패해도 배포는 성공으로 간주 (내부적으로는 작동할 수 있음)
+          fi
